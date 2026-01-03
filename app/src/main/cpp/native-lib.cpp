@@ -2,6 +2,7 @@
 
 #include <string>
 #include <mutex>
+#include <atomic>
 #include <sstream>
 #include <vector>
 #include <cctype>
@@ -12,7 +13,8 @@ extern "C" {
 #include <ngspice/sharedspice.h>
 }
 
-static bool g_initialized = false;
+//static bool g_initialized = false;
+static std::atomic<bool> g_initialized{false};
 
 // Mutex for ngspice calls (serialize init/run)
 static std::mutex g_spiceMutex;
@@ -63,7 +65,8 @@ extern "C" int controlledExit(int status, bool /*immediate*/, bool /*quit*/, int
     appendOutput("\n[ngspice controlledExit]\n");
     std::string s = "[ngspice exited with status " + std::to_string(status) + "]";
     appendOutput(s.c_str());
-    g_initialized = false;
+    //g_initialized = false;
+    g_initialized.store(false, std::memory_order_release);
     return 0;
 }
 
@@ -131,7 +134,7 @@ Java_com_devinrcohen_droidspice_MainActivity_initNgspice(JNIEnv* env, jobject /*
 {
     std::lock_guard<std::mutex> lock(g_spiceMutex);
 
-    if (!g_initialized) {
+    if (/*!g_initialized*/ !g_initialized.load(std::memory_order_acquire)) {
         clearOutput();
 
         int ret = ngSpice_Init(
@@ -149,7 +152,8 @@ Java_com_devinrcohen_droidspice_MainActivity_initNgspice(JNIEnv* env, jobject /*
             return env->NewStringUTF(msg.c_str());
         }
 
-        g_initialized = true;
+        //g_initialized = true;
+        g_initialized.store(true, std::memory_order_release);
     }
 
     return env->NewStringUTF("ngspice initialized.\n");
@@ -161,7 +165,7 @@ Java_com_devinrcohen_droidspice_MainActivity_runOp(JNIEnv* env, jobject /*thiz*/
 {
     std::lock_guard<std::mutex> lock(g_spiceMutex);
 
-    if (!g_initialized) {
+    if (/*!g_initialized*/!g_initialized.load(std::memory_order_acquire)) {
         return env->NewStringUTF("ERROR: ngspice not initialized\n");
     }
 
