@@ -1,4 +1,4 @@
 <resources>
     <string name="app_name">DroidSpice</string>
-    <string name="default_netlist">VDIVIDER.CIR\n*\nVS 1 0 10\nR1 1 2 3k\nR2 2 0 7k\nC1 2 0 100p\nI1 0 2 2m\n.END</string>
+    <string name="v_divider_netlist">VDIVIDER.CIR\n*\nVS 1 0 [VS]\nR1 1 2 [R1]\nR2 2 0 [R2]\nC1 2 0 [C1]\nD1 2 0 DTEST\n.model DTEST D(IS=0.1p RS=12m)\n.END\n</string>
 </resources>
