@@ -26,7 +26,8 @@ class MainActivity : AppCompatActivity() {
         // starting values
         // these are unitless since the unit prefix
         // ultimately dictates what goes in the netlist
-
+        val netlist_template : String = getString(R.string.v_divider_netlist)
+        var current_netlist : String = ""
         var v1txt : String = "10.0"
         var r1txt : String = "7.0"
         var r2txt : String = "3.0"
@@ -64,23 +65,24 @@ class MainActivity : AppCompatActivity() {
 
         // TODO("more initialization stuff like diode params")
 
-        fun createNetlist() : String {
+        fun createNetlist() {
             val vs = generateComponentVal(binding.teV1.text.toString(), binding.spinnerV1.selectedItem.toString())
             val r1 = generateComponentVal(binding.teR1.text.toString(), binding.spinnerR1.selectedItem.toString())
             val r2 = generateComponentVal(binding.teR2.text.toString(), binding.spinnerR2.selectedItem.toString())
 
-            return getString(R.string.v_divider_netlist)
+            current_netlist = netlist_template
                 .replace("[vs]", vs, true)
                 .replace("[r1]", r1, true)
                 .replace("[r2]", r2, true)
                 .replace("[c1]", "100p", true)
                 .trimIndent()
+            binding.tvNetlist.setText(current_netlist)
         }
 
         val suffixListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
                 if (suppressUiCallbacks) return
-                binding.tvNetlist.setText(createNetlist())
+                createNetlist()
             }
             override fun onNothingSelected(parent: AdapterView<*>?) { }
         }
@@ -103,8 +105,7 @@ class MainActivity : AppCompatActivity() {
             binding.teV1.setText(v1txt)
             binding.teR1.setText(r1txt)
             binding.teR2.setText(r2txt)
-
-            binding.tvNetlist.setText(createNetlist())
+            createNetlist()
         }
 
         // populate UI controls
@@ -113,8 +114,8 @@ class MainActivity : AppCompatActivity() {
         // do simulation
         binding.tvOutput.text = initNgspice()
         binding.btnRunOP.setOnClickListener {
-            val netlist = binding.tvNetlist.text.toString()
-            binding.tvOutput.text = runOp(netlist)
+            //val netlist = binding.tvNetlist.text.toString()
+            binding.tvOutput.text = runOp(current_netlist)
         }
 
 //        binding.teV1.addTextChangedListener(object: TextWatcher {
@@ -140,7 +141,7 @@ class MainActivity : AppCompatActivity() {
                 withSuppressedCallbacks {
                     binding.teV1.setText(v1val.toString())
                 }
-                binding.tvNetlist.setText(createNetlist())
+                createNetlist()
             }
             override fun onStartTrackingTouch(seekBar: SeekBar?) { }
             override fun onStopTrackingTouch(seekBar: SeekBar?) { }
@@ -154,7 +155,7 @@ class MainActivity : AppCompatActivity() {
                 withSuppressedCallbacks{
                      binding.teR1.setText(r1val.toString())
                 }
-                binding.tvNetlist.setText(createNetlist())
+                createNetlist()
             }
             override fun onStartTrackingTouch(seekBar: SeekBar?) { }
             override fun onStopTrackingTouch(seekBar: SeekBar?) { }
@@ -167,7 +168,7 @@ class MainActivity : AppCompatActivity() {
                 withSuppressedCallbacks {
                     binding.teR2.setText(r2val.toString())
                 }
-                binding.tvNetlist.setText(createNetlist())
+                createNetlist()
             }
             override fun onStartTrackingTouch(seekBar: SeekBar?) { }
             override fun onStopTrackingTouch(seekBar: SeekBar?) { }
@@ -176,17 +177,17 @@ class MainActivity : AppCompatActivity() {
         // TEXTEDIT LISTENERS
         binding.teV1.doAfterTextChanged {
             if (suppressUiCallbacks) return@doAfterTextChanged
-            binding.tvNetlist.setText(createNetlist())
+            createNetlist()
         }
 
         binding.teR1.doAfterTextChanged {
             if (suppressUiCallbacks) return@doAfterTextChanged
-            binding.tvNetlist.setText(createNetlist())
+            createNetlist()
         }
 
-        binding.teR1.doAfterTextChanged {
+        binding.teR2.doAfterTextChanged {
             if (suppressUiCallbacks) return@doAfterTextChanged
-            binding.tvNetlist.setText(createNetlist())
+            createNetlist()
         }
 
         // SPINNER LISTENERS
