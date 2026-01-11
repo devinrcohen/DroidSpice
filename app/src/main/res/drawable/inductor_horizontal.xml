@@ -7,7 +7,7 @@
 
     <path
         android:fillColor="@android:color/transparent"
-        android:strokeColor="@android:color/system_inverse_on_surface_light"
+        android:strokeColor="#888888"
         android:strokeWidth="2"
         android:strokeLineCap="round"
         android:strokeLineJoin="round"
