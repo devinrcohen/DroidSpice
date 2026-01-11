@@ -148,43 +148,39 @@
     </LinearLayout>
 
     <!-- ===== 2) Netlist ScrollView (expands) ===== -->
-    <ScrollView
-        android:id="@+id/svNetlist"
-        android:layout_width="0dp"
-        android:layout_height="0dp"
-        android:layout_marginStart="8dp"
-        android:layout_marginEnd="8dp"
-        android:layout_marginTop="8dp"
-        android:fillViewport="true"
-        app:layout_constraintTop_toBottomOf="@id/linControls"
-        app:layout_constraintBottom_toTopOf="@id/btnRunOP"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent">
-
-        <TextView
-            android:id="@+id/tvNetlist"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:fontFamily="monospace"
-            android:padding="8dp"
-            android:text="(netlist)"
-            tools:text="VDIVIDER.CIR&#10;*&#10;VS 1 0 12&#10;R1 1 2 3k&#10;R2 2 0 7k&#10;C1 2 0 100p&#10;.END" />
-    </ScrollView>
 
     <!-- ===== 3) Button ===== -->
+
+    <ImageView
+        android:id="@+id/ivSchematic"
+        android:layout_width="match_parent"
+        android:layout_height="100dp"
+        android:layout_marginStart="8dp"
+        android:layout_marginTop="8dp"
+        android:layout_marginEnd="8dp"
+        android:fillViewport="true"
+        app:layout_constraintBottom_toTopOf="@id/btnRunOP"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintHorizontal_bias="0.496"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/linControls"
+        app:srcCompat="@drawable/mosfet_n_right_source_bottom"
+        tools:srcCompat="@drawable/mosfet_n_right_source_bottom" />
+
     <Button
         android:id="@+id/btnRunOP"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:layout_marginStart="8dp"
-        android:layout_marginEnd="8dp"
         android:layout_marginTop="8dp"
+        android:layout_marginEnd="8dp"
         android:layout_marginBottom="8dp"
         android:text="RUN OP"
-        app:layout_constraintTop_toBottomOf="@id/svNetlist"
         app:layout_constraintBottom_toTopOf="@id/svOutput"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintHorizontal_bias="1.0"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent" />
+        app:layout_constraintTop_toBottomOf="@id/ivSchematic" />
 
     <!-- ===== 4) Output ScrollView (expands) ===== -->
     <ScrollView
@@ -195,17 +191,21 @@
         android:layout_marginEnd="8dp"
         android:layout_marginBottom="8dp"
         android:fillViewport="true"
-        app:layout_constraintTop_toBottomOf="@id/btnRunOP"
+        android:scrollbarStyle="insideInset"
+        android:scrollbars="vertical"
         app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent">
+        app:layout_constraintTop_toBottomOf="@id/btnRunOP">
 
         <TextView
             android:id="@+id/tvOutput"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:padding="8dp"
+            android:selectAllOnFocus="true"
             android:text="(sim output)"
+            android:textIsSelectable="true"
             tools:text="ngspice OK (init + version command)&#10;...&#10;V(2)=8.4V" />
     </ScrollView>
 
