@@ -76,7 +76,7 @@ class MainActivity : AppCompatActivity() {
                 .replace("[r2]", r2, true)
                 .replace("[c1]", "100p", true)
                 .trimIndent()
-            binding.tvNetlist.setText(current_netlist)
+            //binding.tvNetlist.setText(current_netlist)
         }
 
         val suffixListener = object : AdapterView.OnItemSelectedListener {
@@ -112,7 +112,7 @@ class MainActivity : AppCompatActivity() {
         updateFromUI()
 
         // do simulation
-        binding.tvOutput.text = initNgspice()
+        //binding.tvOutput.text = initNgspice()
         binding.btnRunOP.setOnClickListener {
             //val netlist = binding.tvNetlist.text.toString()
             binding.tvOutput.text = runOp(current_netlist)
