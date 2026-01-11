@@ -15,6 +15,7 @@ extern "C" {
 
 //static bool g_initialized = false;
 static std::atomic<bool> g_initialized{false};
+static std::atomic<bool> g_hasLoadedCircuit{false};
 
 // Mutex for ngspice calls (serialize init/run)
 static std::mutex g_spiceMutex;
@@ -29,6 +30,7 @@ static void clearOutput()
     g_output.clear();
 }
 
+// updates the static g_output string (guarded by a mutex)
 static void appendOutput(const char* s)
 {
     if (!s) return;
@@ -40,6 +42,7 @@ static void appendOutput(const char* s)
     }
 }
 
+// returns the g_output string (guarded by a mutex)
 static std::string takeOutputSnapshot()
 {
     std::lock_guard<std::mutex> lk(g_outMutex);
@@ -50,13 +53,17 @@ static std::string takeOutputSnapshot()
 
 extern "C" int sendChar(char* msg, int /*id*/, void* /*user*/)
 {
-    appendOutput(msg);
+    char buffer[100];
+    sprintf(buffer, "[char]: %s", msg);
+    appendOutput(buffer);
     return 0;
 }
 
 extern "C" int sendStat(char* msg, int /*id*/, void* /*user*/)
 {
-    appendOutput(msg);
+    char buffer[100];
+    sprintf(buffer, "[stat]: %s", msg);
+    appendOutput(buffer);
     return 0;
 }
 
@@ -165,6 +172,25 @@ Java_com_devinrcohen_droidspice_MainActivity_runOp(JNIEnv* env, jobject /*thiz*/
 {
     std::lock_guard<std::mutex> lock(g_spiceMutex);
 
+
+    // let's see the results of every individual command
+    auto cmd = [&](const char*s, const bool display_message) {
+        if(display_message) appendOutput((std::string("[CMD] ") + s + "\n").c_str());
+        ngSpice_Command(const_cast<char*>(s));
+    };
+
+    auto circ = [&](std::vector<char *>& cLines, const bool display_message) {
+        if(display_message)
+            for (const char* line : cLines)
+            {
+                if (!line) break; // stop at terminator
+                appendOutput((std::string("[CIRC] ") + std::string(line) + "\n").c_str());
+            }
+        int rc = ngSpice_Circ(const_cast<char**>(cLines.data()));
+        //appendOutput((("\n[CIRC] ngSpiceCirc rc=") + std::to_string(rc) + "\n").c_str());
+        return rc;
+    };
+
     if (/*!g_initialized*/!g_initialized.load(std::memory_order_acquire)) {
         return env->NewStringUTF("ERROR: ngspice not initialized\n");
     }
@@ -176,8 +202,13 @@ Java_com_devinrcohen_droidspice_MainActivity_runOp(JNIEnv* env, jobject /*thiz*/
     clearOutput();
 
     // Start from a clean ngspice state.
-    ngSpice_Command(const_cast<char*>("destroy all"));
-    ngSpice_Command(const_cast<char*>("reset"));
+    // may complain on the first run because no circuit given, so nothing to "destroy" or "reset"
+    // So check to see if a circuit has even been loaded yet
+    if(g_hasLoadedCircuit.load(std::memory_order_acquire)){
+        cmd(const_cast<char *>("destroy all"), false);
+        cmd(const_cast<char *>("reset"), false);
+    }
+
 
     // Build a strict, NULL-terminated deck for ngSpice_Circ:
     // - normalized whitespace
@@ -221,7 +252,10 @@ Java_com_devinrcohen_droidspice_MainActivity_runOp(JNIEnv* env, jobject /*thiz*/
     }
     cLines.push_back(nullptr);
 
-    int rc = ngSpice_Circ(cLines.data());
+    int rc = circ(cLines, false);
+    appendOutput(("[CIRC] rc=" + std::to_string(rc) + "\n").c_str());
+
+    if (rc == 0) g_hasLoadedCircuit.store(true, std::memory_order_release);
 
     for (char* p : cLines) {
         if (p) ::free(p);
@@ -234,8 +268,7 @@ Java_com_devinrcohen_droidspice_MainActivity_runOp(JNIEnv* env, jobject /*thiz*/
     }
 
     // listing is the quickest "do we have a circuit?" proof
-    ngSpice_Command(const_cast<char*>("listing"));
-
+    //cmd(const_cast<char*>("listing"), false);
     if (rc != 0) {
         // If load failed, return now with whatever ngspice said.
         std::string out = takeOutputSnapshot();
@@ -243,9 +276,24 @@ Java_com_devinrcohen_droidspice_MainActivity_runOp(JNIEnv* env, jobject /*thiz*/
     }
 
     // Run operating point and print results.
-    ngSpice_Command(const_cast<char*>("op"));
-    ngSpice_Command(const_cast<char*>("print all"));
+    appendOutput("\"op\" command sent\n==========================\n");
+    cmd(const_cast<char*>("op"), false);
 
+    g_output.clear();
+    appendOutput("\"print all\" command sent\n==========================\n");
+    cmd(const_cast<char*>("print all"), false);
+    char* v2request = "v(2)";
+    pvector_info v2 = ngGet_Vec_Info(v2request);
+    char v2_buffer[100];
+    sprintf(v2_buffer, "v(2): %f", v2->v_realdata[0]);
+    appendOutput(v2_buffer);
     std::string out = takeOutputSnapshot();
     return env->NewStringUTF(out.c_str());
+}
+
+extern "C"
+JNIEXPORT jdouble JNICALL
+Java_com_devinrcohen_droidspice_MainActivity_getOpVoltage(JNIEnv* env, jobject /*thiz*/, jstring netname)
+{
+    return 5.0f;
 }
