@@ -53,17 +53,17 @@ static std::string takeOutputSnapshot()
 
 extern "C" int sendChar(char* msg, int /*id*/, void* /*user*/)
 {
-    char buffer[100];
-    sprintf(buffer, "[char]: %s", msg);
-    appendOutput(buffer);
+    std::string out = msg;
+    out = "[char] " + out;
+    appendOutput(out.c_str());
     return 0;
 }
 
 extern "C" int sendStat(char* msg, int /*id*/, void* /*user*/)
 {
-    char buffer[100];
-    sprintf(buffer, "[stat]: %s", msg);
-    appendOutput(buffer);
+    std::string out = msg;
+    out = "[stat] " + out;
+    appendOutput(out.c_str());
     return 0;
 }
 
@@ -279,21 +279,63 @@ Java_com_devinrcohen_droidspice_MainActivity_runOp(JNIEnv* env, jobject /*thiz*/
     appendOutput("\"op\" command sent\n==========================\n");
     cmd(const_cast<char*>("op"), false);
 
-    g_output.clear();
+    clearOutput();
     appendOutput("\"print all\" command sent\n==========================\n");
     cmd(const_cast<char*>("print all"), false);
-    char* v2request = "v(2)";
-    pvector_info v2 = ngGet_Vec_Info(v2request);
-    char v2_buffer[100];
-    sprintf(v2_buffer, "v(2): %f", v2->v_realdata[0]);
-    appendOutput(v2_buffer);
+    //ngSpice_Command(const_cast<char*>("print all");
     std::string out = takeOutputSnapshot();
     return env->NewStringUTF(out.c_str());
 }
 
+// Use to get single signal from op analysis, for debug and early implementation only
+// It is more efficient to pass a Kotlin StringArray of signal names
+// and return a jdoubleArray (Kotlin: DoubleArray) to only cross the JNI boundary twice for
+// the whole list, instead of twice for each signal
 extern "C"
 JNIEXPORT jdouble JNICALL
-Java_com_devinrcohen_droidspice_MainActivity_getOpVoltage(JNIEnv* env, jobject /*thiz*/, jstring netname)
+Java_com_devinrcohen_droidspice_MainActivity_getOpSignal(JNIEnv* env, jobject /*thiz*/, jstring netname)
 {
-    return 5.0f;
+    if (!netname) return std::numeric_limits<double>::quiet_NaN();
+
+    // don't cast immediately
+    const char* net = env->GetStringUTFChars(netname, nullptr);
+    if (!net) return std::numeric_limits<double>::quiet_NaN();
+    std::lock_guard<std::mutex> lock(g_spiceMutex);
+
+    // cast to char* here, API requires char*, not const char*
+    pvector_info signal = ngGet_Vec_Info(const_cast<char*>(net));
+    env->ReleaseStringUTFChars(netname, net);
+
+    if (!signal || signal->v_length < 1 || !signal->v_realdata) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+
+    return static_cast<jdouble>(signal->v_realdata[0]);
+}
+
+extern "C"
+JNIEXPORT jdoubleArray JNICALL
+Java_com_devinrcohen_droidspice_MainActivity_getOpSignals(JNIEnv* env, jobject /*thiz*/, jobjectArray netnames)
+{
+    jsize n = env->GetArrayLength(netnames);
+    std::vector<jdouble> out(n, std::numeric_limits<double>::quiet_NaN());
+    // stc::lock_guard<std::mutex> lock(g_spiceMutex);
+
+    // loop through array
+    for (jsize i = 0; i < n; ++i)
+    {
+        jstring js = (jstring) env->GetObjectArrayElement(netnames, i);
+        const char* s = env->GetStringUTFChars(js, nullptr);
+
+        pvector_info v = ngGet_Vec_Info(const_cast<char*>(s));
+        if (v && v->v_length > 0 && v->v_realdata) out[i] = v->v_realdata[0]; // first datapoint for op
+
+        // prevent memory leak
+        env->ReleaseStringUTFChars(js, s);
+        env->DeleteLocalRef(js);
+    }
+    // create and populate the Kotlin DoubleArray to return
+    jdoubleArray arr = env->NewDoubleArray(n);
+    env->SetDoubleArrayRegion(arr, 0, n, out.data());
+    return arr;
 }

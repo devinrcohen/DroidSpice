@@ -11,13 +11,27 @@ import android.widget.SeekBar
 import android.widget.Spinner
 import androidx.appcompat.app.AppCompatActivity
 import com.devinrcohen.droidspice.databinding.ActivityMainBinding
+import java.util.Locale
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
 
+
     external fun initNgspice(): String
     external fun runOp(netlist: String): String
+
+    external fun getOpSignal(netname: String) : Double
+
+    external fun getOpSignals(netnames: Array<String>): DoubleArray
+
+    private fun GetSignalsMap(names: Array<String>, values: DoubleArray): Map<String, Double>
+    {
+        val results: Map<String, Double> = names
+            .zip(values.toTypedArray())
+            .associate { it.first to it.second }
+        return results
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -74,6 +88,7 @@ class MainActivity : AppCompatActivity() {
                 .replace("[vs]", vs, true)
                 .replace("[r1]", r1, true)
                 .replace("[r2]", r2, true)
+                .replace("[l1]", "3000p", true)
                 .replace("[c1]", "100p", true)
                 .trimIndent()
             //binding.tvNetlist.setText(current_netlist)
@@ -115,7 +130,24 @@ class MainActivity : AppCompatActivity() {
         //binding.tvOutput.text = initNgspice()
         binding.btnRunOP.setOnClickListener {
             //val netlist = binding.tvNetlist.text.toString()
-            binding.tvOutput.text = runOp(current_netlist)
+            //var response = runOp(current_netlist)
+            runOp(current_netlist)
+
+            // build associative array
+            val netnames = arrayOf("v(1)", "v(2)", "v(4)", "vs#branch", "l1#branch");
+            val signals: DoubleArray = getOpSignals(netnames)
+            val signalsMap: Map<String, Double> = GetSignalsMap(netnames, signals)
+
+            // can now call signals by name
+            val v_2: Double = signalsMap.getValue("v(2)")
+            val v_4: Double = signalsMap.getValue("v(4)")
+            val i_vs_mA: Double = signalsMap.getValue("vs#branch") * 1000
+            val i_l1_mA: Double = signalsMap.getValue("l1#branch") * 1000
+            var response = "V(4) = " + String.format(Locale.US,"%.1f", v_4) + " V\n"
+            response += "V(2) = " + String.format(Locale.US,"%.3f", v_2) + " V\n"
+            response += "I(Vs) = " + String.format(Locale.US,"%.2f", i_vs_mA) + " mA\n"
+            response += "I(L1) = " + String.format(Locale.US,"%.2f", i_l1_mA) + " mA\n"
+            binding.tvOutput.text = response.toString()
         }
 
 //        binding.teV1.addTextChangedListener(object: TextWatcher {
