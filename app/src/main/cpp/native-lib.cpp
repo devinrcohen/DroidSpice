@@ -3,11 +3,13 @@
 #include <string>
 #include <mutex>
 #include <atomic>
+#include <condition_variable>
 #include <sstream>
 #include <vector>
 #include <cctype>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 
 extern "C" {
 #include <ngspice/sharedspice.h>
@@ -23,6 +25,37 @@ static std::mutex g_spiceMutex;
 // Mutex for output aggregation (callbacks may come asynchronously)
 static std::mutex g_outMutex;
 static std::string g_output;
+
+// Mutex for data aggregation
+static std::mutex g_dataMutex;
+static std::vector<std::string> g_vecNames;
+static int g_vecCount = 0;
+
+// Row-major samples:
+//   stride=1 (real):   [s0v0, s0v1, ... s0vN-1, s1v0, ...]
+//   stride=2 (complex):[s0v0R, s0v0I, s0v1R, s0v1I, ...]
+static std::vector<double> g_samples;
+static bool g_storeComplex = false;
+
+// Background thread running flag (for analyses that execute async inside ngspice)
+static std::mutex g_bgMutex;
+static std::condition_variable g_bgCv;
+static std::atomic<bool> g_bgRunning{false};
+
+static void setBgRunning(bool running)
+{
+    {
+        std::lock_guard<std::mutex> lk(g_bgMutex);
+        g_bgRunning.store(running, std::memory_order_release);
+    }
+    g_bgCv.notify_all();
+}
+
+static void waitBgDone()
+{
+    std::unique_lock<std::mutex> lk(g_bgMutex);
+    g_bgCv.wait(lk, [] { return !g_bgRunning.load(std::memory_order_acquire); });
+}
 
 static void clearOutput()
 {
@@ -53,17 +86,13 @@ static std::string takeOutputSnapshot()
 
 extern "C" int sendChar(char* msg, int /*id*/, void* /*user*/)
 {
-    std::string out = msg;
-    out = "[char] " + out;
-    appendOutput(out.c_str());
+    appendOutput(msg);
     return 0;
 }
 
 extern "C" int sendStat(char* msg, int /*id*/, void* /*user*/)
 {
-    std::string out = msg;
-    out = "[stat] " + out;
-    appendOutput(out.c_str());
+    appendOutput(msg);
     return 0;
 }
 
@@ -77,18 +106,50 @@ extern "C" int controlledExit(int status, bool /*immediate*/, bool /*quit*/, int
     return 0;
 }
 
-extern "C" int sendData(pvecvaluesall /*vec*/, int /*num*/, int /*id*/, void* /*user*/)
+extern "C" int sendData(pvecvaluesall vec, int /*num*/, int /*id*/, void* /*user*/)
 {
+    std::lock_guard<std::mutex> lk(g_dataMutex);
+
+    const int n = vec->veccount;
+
+    if (!g_storeComplex) {
+        g_samples.reserve(g_samples.size() + n);
+        for (int i = 0; i < n; ++i)
+        {
+            g_samples.push_back(vec->vecsa[i]->creal); // add data for real only
+        }
+    } else {
+        g_samples.reserve(g_samples.size() + 2*n); // need two slots, for real and imaginary
+        for (int i = 0; i < n; ++i)
+        {
+            g_samples.push_back(vec->vecsa[i]->creal);
+            g_samples.push_back(vec->vecsa[i]->cimag);
+        }
+    }
+
     return 0;
 }
 
-extern "C" int sendInitData(pvecinfoall /*vec*/, int /*id*/, void* /*user*/)
+extern "C" int sendInitData(pvecinfoall info, int /*id*/, void* /*user*/)
 {
+    std::lock_guard<std::mutex> lk(g_dataMutex);
+
+    g_vecNames.clear();
+    g_samples.clear();
+
+    g_vecCount = info->veccount;
+    g_vecNames.reserve(g_vecCount);
+
+    for (int i=0; i < g_vecCount; ++i)
+    {
+        g_vecNames.emplace_back(info->vecs[i]->vecname);
+    }
     return 0;
 }
 
-extern "C" int bgThreadRunning(bool /*running*/, int /*id*/, void* /*user*/)
+extern "C" int bgThreadRunning(bool running, int /*id*/, void* /*user*/)
 {
+    setBgRunning(running);
     return 0;
 }
 
@@ -161,55 +222,27 @@ Java_com_devinrcohen_droidspice_MainActivity_initNgspice(JNIEnv* env, jobject /*
 
         //g_initialized = true;
         g_initialized.store(true, std::memory_order_release);
+        g_hasLoadedCircuit.store(false, std::memory_order_release);
+        setBgRunning(false);
     }
 
     return env->NewStringUTF("ngspice initialized.\n");
 }
 
-extern "C"
-JNIEXPORT jstring JNICALL
-Java_com_devinrcohen_droidspice_MainActivity_runOp(JNIEnv* env, jobject /*thiz*/, jstring netlist)
+static int runCommand(const char* s)
 {
-    std::lock_guard<std::mutex> lock(g_spiceMutex);
+    if (!s) return 1;
+    return ngSpice_Command(const_cast<char*>(s));
+}
 
+static int runCirc(char** deck)
+{
+    if (!deck) return 1;
+    return ngSpice_Circ(deck);
+}
 
-    // let's see the results of every individual command
-    auto cmd = [&](const char*s, const bool display_message) {
-        if(display_message) appendOutput((std::string("[CMD] ") + s + "\n").c_str());
-        ngSpice_Command(const_cast<char*>(s));
-    };
-
-    auto circ = [&](std::vector<char *>& cLines, const bool display_message) {
-        if(display_message)
-            for (const char* line : cLines)
-            {
-                if (!line) break; // stop at terminator
-                appendOutput((std::string("[CIRC] ") + std::string(line) + "\n").c_str());
-            }
-        int rc = ngSpice_Circ(const_cast<char**>(cLines.data()));
-        //appendOutput((("\n[CIRC] ngSpiceCirc rc=") + std::to_string(rc) + "\n").c_str());
-        return rc;
-    };
-
-    if (/*!g_initialized*/!g_initialized.load(std::memory_order_acquire)) {
-        return env->NewStringUTF("ERROR: ngspice not initialized\n");
-    }
-
-    const char* nl = env->GetStringUTFChars(netlist, nullptr);
-    std::string netlistStr = nl ? nl : "";
-    env->ReleaseStringUTFChars(netlist, nl);
-
-    clearOutput();
-
-    // Start from a clean ngspice state.
-    // may complain on the first run because no circuit given, so nothing to "destroy" or "reset"
-    // So check to see if a circuit has even been loaded yet
-    if(g_hasLoadedCircuit.load(std::memory_order_acquire)){
-        cmd(const_cast<char *>("destroy all"), false);
-        cmd(const_cast<char *>("reset"), false);
-    }
-
-
+static std::vector<char*> buildDeck(const std::string& netlistStr)
+{
     // Build a strict, NULL-terminated deck for ngSpice_Circ:
     // - normalized whitespace
     // - no blank lines
@@ -251,91 +284,119 @@ Java_com_devinrcohen_droidspice_MainActivity_runOp(JNIEnv* env, jobject /*thiz*/
         cLines.push_back(::strdup(l.c_str()));
     }
     cLines.push_back(nullptr);
+    return cLines;
+}
 
-    int rc = circ(cLines, false);
-    appendOutput(("[CIRC] rc=" + std::to_string(rc) + "\n").c_str());
-
-    if (rc == 0) g_hasLoadedCircuit.store(true, std::memory_order_release);
-
-    for (char* p : cLines) {
+static void freeDeck(std::vector<char*>& deck)
+{
+    for (char* p : deck) {
         if (p) ::free(p);
     }
+    deck.clear();
+}
 
-    // Instrumentation: show load status and dump what ngspice thinks is loaded.
-    {
-        std::string msg = "\nngSpice_Circ rc=" + std::to_string(rc) + "\n";
-        appendOutput(msg.c_str());
+static bool analysisRequiresComplex(const std::string& cmd)
+{
+    // Simple heuristic: AC analysis produces complex results.
+    // (OP and TRAN are real-valued for typical use.)
+    std::string low;
+    low.reserve(cmd.size());
+    for (unsigned char ch : cmd) low.push_back((char)std::tolower(ch));
+    // Trim leading spaces
+    size_t start = low.find_first_not_of(" \t");
+    if (start == std::string::npos) return false;
+    low = low.substr(start);
+    return (low.rfind("ac", 0) == 0);
+}
+
+extern "C"
+JNIEXPORT jstring JNICALL
+Java_com_devinrcohen_droidspice_MainActivity_runAnalysis(JNIEnv* env, jobject /*thiz*/, jstring netlist, jstring analysisCmd)
+{
+    std::lock_guard<std::mutex> lock(g_spiceMutex);
+
+    if (/*!g_initialized*/!g_initialized.load(std::memory_order_acquire)) {
+        return env->NewStringUTF("ERROR: ngspice not initialized\n");
     }
 
-    // listing is the quickest "do we have a circuit?" proof
-    //cmd(const_cast<char*>("listing"), false);
+    const char* nl = env->GetStringUTFChars(netlist, nullptr);
+    std::string netlistStr = nl ? nl : "";
+    env->ReleaseStringUTFChars(netlist, nl);
+
+    const char* ac = env->GetStringUTFChars(analysisCmd, nullptr);
+    std::string analysisStr = ac ? ac : "";
+    env->ReleaseStringUTFChars(analysisCmd, ac);
+
+    clearOutput();
+
+    // Start from a clean ngspice state.
+    // may complain on the first run because no circuit given, so nothing to "destroy" or "reset"
+    // So check to see if a circuit has even been loaded yet
+    // Clean ngspice state only after we've ever loaded a circuit.
+    if (g_hasLoadedCircuit.load(std::memory_order_acquire)) {
+        runCommand("destroy all");
+        runCommand("reset");
+        clearOutput();
+    }
+
+    // Set stride policy: complex for AC, real otherwise.
+    g_storeComplex = analysisRequiresComplex(analysisStr);
+
+    // Build and load deck.
+    std::vector<char*> deck = buildDeck(netlistStr);
+    int rc = runCirc(deck.data());
+    if (rc == 0) g_hasLoadedCircuit.store(true, std::memory_order_release);
+    freeDeck(deck);
     if (rc != 0) {
         // If load failed, return now with whatever ngspice said.
         std::string out = takeOutputSnapshot();
         return env->NewStringUTF(out.c_str());
     }
 
-    // Run operating point and print results.
-    appendOutput("\"op\" command sent\n==========================\n");
-    cmd(const_cast<char*>("op"), false);
+    // Run the requested analysis.
+    setBgRunning(false);
+    runCommand(analysisStr.c_str());
+    waitBgDone();
 
-    clearOutput();
-    appendOutput("\"print all\" command sent\n==========================\n");
-    cmd(const_cast<char*>("print all"), false);
-    //ngSpice_Command(const_cast<char*>("print all");
     std::string out = takeOutputSnapshot();
     return env->NewStringUTF(out.c_str());
 }
 
-// Use to get single signal from op analysis, for debug and early implementation only
-// It is more efficient to pass a Kotlin StringArray of signal names
-// and return a jdoubleArray (Kotlin: DoubleArray) to only cross the JNI boundary twice for
-// the whole list, instead of twice for each signal
 extern "C"
-JNIEXPORT jdouble JNICALL
-Java_com_devinrcohen_droidspice_MainActivity_getOpSignal(JNIEnv* env, jobject /*thiz*/, jstring netname)
+JNIEXPORT jdoubleArray JNICALL
+Java_com_devinrcohen_droidspice_MainActivity_takeSamples(JNIEnv* env, jobject /*thiz*/)
 {
-    if (!netname) return std::numeric_limits<double>::quiet_NaN();
-
-    // don't cast immediately
-    const char* net = env->GetStringUTFChars(netname, nullptr);
-    if (!net) return std::numeric_limits<double>::quiet_NaN();
-    std::lock_guard<std::mutex> lock(g_spiceMutex);
-
-    // cast to char* here, API requires char*, not const char*
-    pvector_info signal = ngGet_Vec_Info(const_cast<char*>(net));
-    env->ReleaseStringUTFChars(netname, net);
-
-    if (!signal || signal->v_length < 1 || !signal->v_realdata) {
-        return std::numeric_limits<double>::quiet_NaN();
+    std::vector<double> tmp;
+    {
+        std::lock_guard<std::mutex> lk(g_dataMutex);
+        // Drain quickly without copying.
+        tmp.swap(g_samples);
     }
 
-    return static_cast<jdouble>(signal->v_realdata[0]);
+    jdoubleArray arr = env->NewDoubleArray((jsize) tmp.size());
+    env->SetDoubleArrayRegion(arr, 0, (jsize)tmp.size(), tmp.data());
+    return arr;
 }
 
 extern "C"
-JNIEXPORT jdoubleArray JNICALL
-Java_com_devinrcohen_droidspice_MainActivity_getOpSignals(JNIEnv* env, jobject /*thiz*/, jobjectArray netnames)
+JNIEXPORT jint JNICALL
+Java_com_devinrcohen_droidspice_MainActivity_getComplexStride(JNIEnv* /*env*/, jobject /*thiz*/)
 {
-    jsize n = env->GetArrayLength(netnames);
-    std::vector<jdouble> out(n, std::numeric_limits<double>::quiet_NaN());
-    // stc::lock_guard<std::mutex> lock(g_spiceMutex);
+    // 1 for real-only results, 2 for real+imag (AC)
+    return g_storeComplex ? 2 : 1;
+}
 
-    // loop through array
-    for (jsize i = 0; i < n; ++i)
+extern "C"
+JNIEXPORT jobjectArray JNICALL
+Java_com_devinrcohen_droidspice_MainActivity_getVecNames(JNIEnv* env, jobject /*thiz*/)
+{
+    std::lock_guard<std::mutex> lk(g_dataMutex);
+
+    jclass strClass = env->FindClass("java/lang/String");
+    jobjectArray arr = env->NewObjectArray((jsize)g_vecNames.size(), strClass, nullptr);
+    for (jsize i = 0; i < (jsize)g_vecNames.size(); ++i)
     {
-        jstring js = (jstring) env->GetObjectArrayElement(netnames, i);
-        const char* s = env->GetStringUTFChars(js, nullptr);
-
-        pvector_info v = ngGet_Vec_Info(const_cast<char*>(s));
-        if (v && v->v_length > 0 && v->v_realdata) out[i] = v->v_realdata[0]; // first datapoint for op
-
-        // prevent memory leak
-        env->ReleaseStringUTFChars(js, s);
-        env->DeleteLocalRef(js);
+        env->SetObjectArrayElement(arr, i, env->NewStringUTF(g_vecNames[i].c_str()));
     }
-    // create and populate the Kotlin DoubleArray to return
-    jdoubleArray arr = env->NewDoubleArray(n);
-    env->SetDoubleArrayRegion(arr, 0, n, out.data());
     return arr;
 }
