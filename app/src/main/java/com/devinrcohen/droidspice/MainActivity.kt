@@ -2,16 +2,13 @@ package com.devinrcohen.droidspice
 
 import android.os.Bundle
 import androidx.core.widget.doAfterTextChanged
-import android.text.Editable
-import android.text.TextWatcher
-import android.util.Log
 import android.view.View
 import android.widget.AdapterView
 import android.widget.SeekBar
-import android.widget.Spinner
 import androidx.appcompat.app.AppCompatActivity
 import com.devinrcohen.droidspice.databinding.ActivityMainBinding
 import java.util.Locale
+import kotlin.math.*
 
 class MainActivity : AppCompatActivity() {
 
@@ -19,19 +16,12 @@ class MainActivity : AppCompatActivity() {
 
 
     external fun initNgspice(): String
-    external fun runOp(netlist: String): String
+    external fun runAnalysis(netlist: String, analysisCmd: String): String
+    external fun getVecNames(): Array<String>
+    external fun takeSamples(): DoubleArray
+    external fun getComplexStride(): Int
 
-    external fun getOpSignal(netname: String) : Double
-
-    external fun getOpSignals(netnames: Array<String>): DoubleArray
-
-    private fun GetSignalsMap(names: Array<String>, values: DoubleArray): Map<String, Double>
-    {
-        val results: Map<String, Double> = names
-            .zip(values.toTypedArray())
-            .associate { it.first to it.second }
-        return results
-    }
+    private fun norm(s: String) = s.trim().lowercase()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -43,8 +33,8 @@ class MainActivity : AppCompatActivity() {
         val netlist_template : String = getString(R.string.v_divider_netlist)
         var current_netlist : String = ""
         var v1txt : String = "10.0"
-        var r1txt : String = "7.0"
-        var r2txt : String = "3.0"
+        var r1txt : String = "1.0"
+        var r2txt : String = "10.0"
 
         // max values for initialize progress calculation
         // leave as constants for now, may add UI elements
@@ -63,16 +53,14 @@ class MainActivity : AppCompatActivity() {
 
         var spinnerV1selection : Int = 1
         var spinnerR1selection : Int = 2
-        var spinnerR2selection : Int = 2
+        var spinnerR2selection : Int = 4
 
         // one-time: init library
         binding.tvOutput.text = initNgspice()
 
 
         fun generateComponentVal(normalized : String, selection : String) : String {
-            println("selection: " + selection.toString() + "\n")
             var suffix : String = selection.toString().dropLast(1)
-            println("suffix: " + suffix + "\n")
             if (suffix == "M") suffix = "meg"
             return normalized + suffix
         }
@@ -88,7 +76,7 @@ class MainActivity : AppCompatActivity() {
                 .replace("[vs]", vs, true)
                 .replace("[r1]", r1, true)
                 .replace("[r2]", r2, true)
-                .replace("[l1]", "3000p", true)
+                .replace("[l1]", "0", true)
                 .replace("[c1]", "100p", true)
                 .trimIndent()
             //binding.tvNetlist.setText(current_netlist)
@@ -128,42 +116,99 @@ class MainActivity : AppCompatActivity() {
 
         // do simulation
         //binding.tvOutput.text = initNgspice()
-        binding.btnRunOP.setOnClickListener {
-            //val netlist = binding.tvNetlist.text.toString()
-            //var response = runOp(current_netlist)
-            runOp(current_netlist)
+        binding.btnRunAC.setOnClickListener {
+            var response = runAnalysis(current_netlist, "ac dec 20 1 1meg")
 
-            // build associative array
-            val netnames = arrayOf("v(1)", "v(2)", "v(4)", "vs#branch", "l1#branch");
-            val signals: DoubleArray = getOpSignals(netnames)
-            val signalsMap: Map<String, Double> = GetSignalsMap(netnames, signals)
+            val names = getVecNames()
+            val stride = getComplexStride() // 1 for real-only, 2 for real+imag
+            val data = takeSamples()
 
-            // can now call signals by name
-            val v_2: Double = signalsMap.getValue("v(2)")
-            val v_4: Double = signalsMap.getValue("v(4)")
-            val i_vs_mA: Double = signalsMap.getValue("vs#branch") * 1000
-            val i_l1_mA: Double = signalsMap.getValue("l1#branch") * 1000
-            var response = "V(4) = " + String.format(Locale.US,"%.1f", v_4) + " V\n"
-            response += "V(2) = " + String.format(Locale.US,"%.3f", v_2) + " V\n"
-            response += "I(Vs) = " + String.format(Locale.US,"%.2f", i_vs_mA) + " mA\n"
-            response += "I(L1) = " + String.format(Locale.US,"%.2f", i_l1_mA) + " mA\n"
-            binding.tvOutput.text = response.toString()
+            val indexByName = HashMap<String, Int>(names.size)
+            for (i in names.indices) {
+                indexByName[norm(names[i])] = i
+            }
+
+            val vecCount = names.size
+            val rowLen = vecCount * stride
+            val sampleCount = if (rowLen > 0) data.size / rowLen else 0
+            val mySample = 105
+            fun realAt(sample: Int, vecIndex: Int): Double =
+                data[sample * rowLen + vecIndex * stride]
+            fun imagAt(sample: Int, vecIndex: Int): Double =
+                data[sample * rowLen + vecIndex * stride + 1]
+            // OP should yield exactly one sample (sampleCount == 1)
+            val idxV2 = indexByName[norm("v(2)")]
+            val idxV4 = indexByName[norm("v(4)")]
+            val idxIVs = indexByName[norm("vs#branch")]
+            val idxIL1 = indexByName[norm("l1#branch")]
+            val idxFreq = indexByName[norm("frequency")]
+
+            if (sampleCount > 0 && idxV2 != null && idxV4 != null && idxIVs != null && idxIL1 != null && idxFreq != null) {
+                val v2real = realAt(mySample, idxV2)
+                val v2imag = imagAt(mySample,idxV2)
+                val v4real = realAt(mySample, idxV4)
+                val v4imag = imagAt(mySample, idxV4)
+//                val iVs_mA = realAt(0, idxIVs) * 1000.0
+//                val iL1_mA = realAt(0, idxIL1) * 1000.0
+                val v2magdB = 10*log10(v2real*v2real + v2imag*v2imag)
+                val v2phase = atan2(v2imag, v2real) * 180.0 / PI
+                val v4magdB = 10*log10(v4real*v4real + v4imag*v4imag)
+                val v4phase = atan2(v4imag, v4real) * 180.0 / PI
+                val freq = realAt(mySample,idxFreq)
+                response += "V(4) = " + String.format(Locale.US, "%.1f", v4magdB) + " dB, " + String.format(Locale.US, "%.1f", v4phase)  + "°\n"
+                response += "V(2) = " + String.format(Locale.US, "%.3f", v2magdB) + " dB, " + String.format(Locale.US, "%.1f", v4phase)  + "°\n"
+//                response += "I(Vs) = " + String.format(Locale.US, "%.2f", iVs_mA) + " mA\n"
+//                response += "I(L1) = " + String.format(Locale.US, "%.2f", iL1_mA) + " mA\n"
+                response += "freq = " + String.format(Locale.US,"%.1f", freq) + " Hz\n"
+            } else {
+                response += "\n[WARN] No AC sample data available (names=${names.size}, stride=$stride, data=${data.size})\n"
+            }
+
+            binding.tvOutput.text = response
         }
 
-//        binding.teV1.addTextChangedListener(object: TextWatcher {
-//            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {
-//                TODO("Not yet implemented")
-//            }
-//
-//            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
-//                TODO("Not yet implemented")
-//            }
-//
-//            override fun afterTextChanged(s: Editable?) {
-//                binding.tiNetlist.setText(createNetlist())
-//            }
-//        })
+        binding.btnRunOP.setOnClickListener {
+            var response = runAnalysis(current_netlist, "op")
 
+            val names = getVecNames()
+            val stride = getComplexStride() // 1 for real-only, 2 for real+imag
+            val data = takeSamples()
+
+            val indexByName = HashMap<String, Int>(names.size)
+            for (i in names.indices) {
+                indexByName[norm(names[i])] = i
+            }
+
+            val vecCount = names.size
+            val rowLen = vecCount * stride
+            val sampleCount = if (rowLen > 0) data.size / rowLen else 0
+
+            fun realAt(sample: Int, vecIndex: Int): Double =
+                data[sample * rowLen + vecIndex * stride]
+
+            // OP should yield exactly one sample (sampleCount == 1)
+            val idxV2 = indexByName[norm("v(2)")]
+            val idxV4 = indexByName[norm("v(4)")]
+            val idxIVs = indexByName[norm("vs#branch")]
+            val idxIL1 = indexByName[norm("l1#branch")]
+
+            if (sampleCount > 0 && idxV2 != null && idxV4 != null && idxIVs != null && idxIL1 != null) {
+                val mySample : Int = 0
+                val v2 = realAt(mySample, idxV2)
+                val v4 = realAt(mySample, idxV4)
+                val iVs_mA = realAt(mySample, idxIVs) * 1000.0
+                val iL1_mA = realAt(mySample, idxIL1) * 1000.0
+
+                response += "V(4) = " + String.format(Locale.US, "%.1f", v4) + " V\n"
+                response += "V(2) = " + String.format(Locale.US, "%.3f", v2) + " V\n"
+                response += "I(Vs) = " + String.format(Locale.US, "%.2f", iVs_mA) + " mA\n"
+                response += "I(L1) = " + String.format(Locale.US, "%.2f", iL1_mA) + " mA\n"
+            } else {
+                response += "\n[WARN] No OP sample data available (names=${names.size}, stride=$stride, data=${data.size})\n"
+            }
+
+            binding.tvOutput.text = response
+        }
         // SEEKBAR LISTENERS
         binding.sbV1.setOnSeekBarChangeListener (object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
@@ -185,7 +230,7 @@ class MainActivity : AppCompatActivity() {
                 val r1val : Double = r1max * progress / 100.0
 
                 withSuppressedCallbacks{
-                     binding.teR1.setText(r1val.toString())
+                    binding.teR1.setText(r1val.toString())
                 }
                 createNetlist()
             }
