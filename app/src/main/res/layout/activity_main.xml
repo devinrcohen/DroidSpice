@@ -153,35 +153,60 @@
 
     <ImageView
         android:id="@+id/ivSchematic"
-        android:layout_width="match_parent"
-        android:layout_height="100dp"
+        android:layout_width="0dp"
+        android:layout_height="153dp"
         android:layout_marginStart="8dp"
         android:layout_marginTop="8dp"
         android:layout_marginEnd="8dp"
         android:fillViewport="true"
-        app:layout_constraintBottom_toTopOf="@id/btnRunOP"
+        app:layout_constraintBottom_toTopOf="@id/horizButtons"
         app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintHorizontal_bias="0.496"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toBottomOf="@id/linControls"
-        app:srcCompat="@drawable/mosfet_n_right_source_bottom"
-        tools:srcCompat="@drawable/mosfet_n_right_source_bottom" />
+        app:srcCompat="@drawable/p_mosfet_bodydiode"
+        tools:srcCompat="@drawable/p_mosfet_bodydiode" />
 
-    <Button
-        android:id="@+id/btnRunOP"
+    <LinearLayout
+        android:id="@+id/horizButtons"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
+        android:orientation="horizontal"
         android:layout_marginStart="8dp"
         android:layout_marginTop="8dp"
         android:layout_marginEnd="8dp"
         android:layout_marginBottom="8dp"
-        android:text="RUN OP"
         app:layout_constraintBottom_toTopOf="@id/svOutput"
         app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintHorizontal_bias="1.0"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/ivSchematic" />
+        app:layout_constraintTop_toBottomOf="@id/ivSchematic">
+        <Button
+            android:id="@+id/btnRunOP"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="OP"
+            app:layout_constraintHorizontal_bias="1.0"
+             />
 
+        <Button
+            android:id="@+id/btnRunAC"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:layout_weight="1"
+            android:text="AC"
+            app:layout_constraintHorizontal_bias="1.0" />
+
+        <Button
+            android:id="@+id/btnRunTran"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+
+            android:layout_weight="1"
+            android:text="TRAN"
+            app:layout_constraintHorizontal_bias="1.0" />
+    </LinearLayout>
     <!-- ===== 4) Output ScrollView (expands) ===== -->
     <ScrollView
         android:id="@+id/svOutput"
@@ -196,7 +221,7 @@
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/btnRunOP">
+        app:layout_constraintTop_toBottomOf="@id/horizButtons">
 
         <TextView
             android:id="@+id/tvOutput"
