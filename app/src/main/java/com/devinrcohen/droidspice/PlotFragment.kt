@@ -1,59 +1,31 @@
 package com.devinrcohen.droidspice
 
 import android.os.Bundle
-import androidx.fragment.app.Fragment
-import android.view.LayoutInflater
 import android.view.View
-import android.view.ViewGroup
+import androidx.fragment.app.Fragment
+import com.github.mikephil.charting.charts.LineChart
+import android.widget.TextView
+import android.widget.Button
 
-// TODO: Rename parameter arguments, choose names that match
-// the fragment initialization parameters, e.g. ARG_ITEM_NUMBER
-private const val ARG_PARAM1 = "param1"
-private const val ARG_PARAM2 = "param2"
+class PlotFragment : Fragment(R.layout.fragment_plot) {
 
-/**
- * A simple [Fragment] subclass.
- * Use the [PlotFragment.newInstance] factory method to
- * create an instance of this fragment.
- */
-class PlotFragment : Fragment() {
-    // TODO: Rename and change types of parameters
-    private var param1: String? = null
-    private var param2: String? = null
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        val chart = view.findViewById<LineChart>(R.id.lineChart)
+        val title = view.findViewById<TextView>(R.id.tvPlotTitle)
+        val close = view.findViewById<Button>(R.id.btnClose)
 
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        arguments?.let {
-            param1 = it.getString(ARG_PARAM1)
-            param2 = it.getString(ARG_PARAM2)
+        title.text = PlotDataHolder.label
+
+        close.setOnClickListener {
+            // pops the backstack entry created in MainActivity.showPlotFragment()
+            //parentFragmentManager.popBackStack()
+            (activity as? MainActivity)?.dismissPlot()
         }
-    }
 
-    override fun onCreateView(
-        inflater: LayoutInflater, container: ViewGroup?,
-        savedInstanceState: Bundle?
-    ): View? {
-        // Inflate the layout for this fragment
-        return inflater.inflate(R.layout.fragment_plot, container, false)
-    }
-
-    companion object {
-        /**
-         * Use this factory method to create a new instance of
-         * this fragment using the provided parameters.
-         *
-         * @param param1 Parameter 1.
-         * @param param2 Parameter 2.
-         * @return A new instance of fragment PlotFragment.
-         */
-        // TODO: Rename and change types and number of parameters
-        @JvmStatic
-        fun newInstance(param1: String, param2: String) =
-            PlotFragment().apply {
-                arguments = Bundle().apply {
-                    putString(ARG_PARAM1, param1)
-                    putString(ARG_PARAM2, param2)
-                }
-            }
+        val f = PlotDataHolder.freqHz
+        val y = PlotDataHolder.y
+        if (f != null && y != null) {
+            plotFrequencyResponse(chart, f, y, PlotDataHolder.label)
+        }
     }
 }
