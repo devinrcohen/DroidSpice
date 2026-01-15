@@ -6,6 +6,7 @@ import android.view.View
 import android.widget.AdapterView
 import android.widget.SeekBar
 import androidx.appcompat.app.AppCompatActivity
+import androidx.fragment.app.FragmentManager
 import com.devinrcohen.droidspice.databinding.ActivityMainBinding
 import java.util.Locale
 import kotlin.math.*
@@ -13,7 +14,7 @@ import kotlin.math.*
 class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
-
+    private lateinit var plotBackCallback: androidx.activity.OnBackPressedCallback
 
     external fun initNgspice(): String
     external fun runAnalysis(netlist: String, analysisCmd: String): String
@@ -22,19 +23,57 @@ class MainActivity : AppCompatActivity() {
     external fun getComplexStride(): Int
 
     private fun norm(s: String) = s.trim().lowercase()
+    fun dismissPlot() {
+        hidePlotFragment()
+    }
+    private fun showPlotFragment() {
+        android.util.Log.d("PlotHost", "plotHost size = ${binding.plotHost.width}x${binding.plotHost.height}, vis=${binding.plotHost.visibility}")
+        binding.plotHost.visibility = View.VISIBLE
+
+        // Enable back interception only while plot is visible
+        plotBackCallback.isEnabled = true
+
+        supportFragmentManager.beginTransaction()
+            .replace(R.id.plotHost, PlotFragment())
+            .addToBackStack("plot")
+            .commit()
+    }
+
+    // for later, if add close button in plot UI
+    private fun hidePlotFragment() {
+        // Remove the fragment synchronously so the overlay releases input immediately
+        supportFragmentManager.findFragmentById(R.id.plotHost)?.let { frag ->
+            supportFragmentManager.beginTransaction()
+                .remove(frag)
+                .commitNow()
+        }
+
+        // Clear any remaining back stack entry named "plot"
+        supportFragmentManager.popBackStack("plot", FragmentManager.POP_BACK_STACK_INCLUSIVE)
+
+        binding.plotHost.visibility = View.GONE
+        plotBackCallback.isEnabled = false
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        plotBackCallback = object : androidx.activity.OnBackPressedCallback(false) {
+            override fun handleOnBackPressed() {
+                hidePlotFragment()
+            }
+        }
+        onBackPressedDispatcher.addCallback(this, plotBackCallback)
         // starting values
         // these are unitless since the unit prefix
         // ultimately dictates what goes in the netlist
         val netlist_template : String = getString(R.string.v_divider_netlist)
         var current_netlist : String = ""
-        var v1txt : String = "10.0"
+        var v1txt : String = "10"
         var r1txt : String = "1.0"
         var r2txt : String = "10.0"
+        var c1txt: String = "500.0"
 
         // max values for initialize progress calculation
         // leave as constants for now, may add UI elements
@@ -44,16 +83,19 @@ class MainActivity : AppCompatActivity() {
         val v1max : Double = 1000.0
         val r1max : Double = 1000.0
         val r2max : Double = 1000.0
+        var c1max : Double = 1000.0
 
         // progress variables - this will
         // be calculated when initialized
         var v1progress : Int = 0
         var r1progress : Int = 0
         var r2progress : Int = 0
+        var c1progress : Int = 0
 
         var spinnerV1selection : Int = 1
-        var spinnerR1selection : Int = 2
-        var spinnerR2selection : Int = 4
+        var spinnerR1selection : Int = 2 // kΩ
+        var spinnerR2selection : Int = 4 // GΩ (approx open circuit)
+        var spinnerC1selection : Int = 0 // pF
 
         // one-time: init library
         binding.tvOutput.text = initNgspice()
@@ -71,13 +113,13 @@ class MainActivity : AppCompatActivity() {
             val vs = generateComponentVal(binding.teV1.text.toString(), binding.spinnerV1.selectedItem.toString())
             val r1 = generateComponentVal(binding.teR1.text.toString(), binding.spinnerR1.selectedItem.toString())
             val r2 = generateComponentVal(binding.teR2.text.toString(), binding.spinnerR2.selectedItem.toString())
-
+            val c1 = generateComponentVal(binding.teC1.text.toString(), binding.spinnerC1.selectedItem.toString())
             current_netlist = netlist_template
                 .replace("[vs]", vs, true)
                 .replace("[r1]", r1, true)
                 .replace("[r2]", r2, true)
                 .replace("[l1]", "0", true)
-                .replace("[c1]", "100p", true)
+                .replace("[c1]", c1, true)
                 .trimIndent()
             //binding.tvNetlist.setText(current_netlist)
         }
@@ -94,20 +136,24 @@ class MainActivity : AppCompatActivity() {
             // populate netlist and UI based off of default values
             // this function SHOULD NOT use getters for UI elements
             binding.spinnerV1.setSelection(spinnerV1selection) // default volt
-            binding.spinnerR1.setSelection(spinnerR1selection) // default kohm
-            binding.spinnerR2.setSelection(spinnerR2selection) // default kohm
+            binding.spinnerR1.setSelection(spinnerR1selection) // default kΩ
+            binding.spinnerR2.setSelection(spinnerR2selection) // default GΩ
+            binding.spinnerC1.setSelection(spinnerC1selection) // default pF
 
             v1progress = (v1txt.toDouble() / v1max * 100).toInt()
             r1progress = (r1txt.toDouble() / r1max * 100).toInt()
             r2progress = (r2txt.toDouble() / r2max * 100).toInt()
+            c1progress = (c1txt.toDouble() / c1max * 100).toInt()
 
             binding.sbV1.setProgress(v1progress, false)
             binding.sbR1.setProgress(r1progress, false)
             binding.sbR2.setProgress(r2progress, false)
+            binding.sbC1.setProgress(c1progress, false)
 
             binding.teV1.setText(v1txt)
             binding.teR1.setText(r1txt)
             binding.teR2.setText(r2txt)
+            binding.teC1.setText(c1txt)
             createNetlist()
         }
 
@@ -117,7 +163,7 @@ class MainActivity : AppCompatActivity() {
         // do simulation
         //binding.tvOutput.text = initNgspice()
         binding.btnRunAC.setOnClickListener {
-            var response = runAnalysis(current_netlist, "ac dec 20 1 1meg")
+            var response = runAnalysis(current_netlist, "ac dec 20 0.1 100meg")
 
             val names = getVecNames()
             val stride = getComplexStride() // 1 for real-only, 2 for real+imag
@@ -131,35 +177,44 @@ class MainActivity : AppCompatActivity() {
             val vecCount = names.size
             val rowLen = vecCount * stride
             val sampleCount = if (rowLen > 0) data.size / rowLen else 0
-            val mySample = 105
+            //val mySample = 105
             fun realAt(sample: Int, vecIndex: Int): Double =
                 data[sample * rowLen + vecIndex * stride]
             fun imagAt(sample: Int, vecIndex: Int): Double =
                 data[sample * rowLen + vecIndex * stride + 1]
             // OP should yield exactly one sample (sampleCount == 1)
             val idxV2 = indexByName[norm("v(2)")]
-            val idxV4 = indexByName[norm("v(4)")]
-            val idxIVs = indexByName[norm("vs#branch")]
-            val idxIL1 = indexByName[norm("l1#branch")]
+//            val idxV4 = indexByName[norm("v(4)")]
+//            val idxIVs = indexByName[norm("vs#branch")]
+//            val idxIL1 = indexByName[norm("l1#branch")]
             val idxFreq = indexByName[norm("frequency")]
 
-            if (sampleCount > 0 && idxV2 != null && idxV4 != null && idxIVs != null && idxIL1 != null && idxFreq != null) {
-                val v2real = realAt(mySample, idxV2)
-                val v2imag = imagAt(mySample,idxV2)
-                val v4real = realAt(mySample, idxV4)
-                val v4imag = imagAt(mySample, idxV4)
-//                val iVs_mA = realAt(0, idxIVs) * 1000.0
-//                val iL1_mA = realAt(0, idxIL1) * 1000.0
-                val v2magdB = 10*log10(v2real*v2real + v2imag*v2imag)
-                val v2phase = atan2(v2imag, v2real) * 180.0 / PI
-                val v4magdB = 10*log10(v4real*v4real + v4imag*v4imag)
-                val v4phase = atan2(v4imag, v4real) * 180.0 / PI
-                val freq = realAt(mySample,idxFreq)
-                response += "V(4) = " + String.format(Locale.US, "%.1f", v4magdB) + " dB, " + String.format(Locale.US, "%.1f", v4phase)  + "°\n"
-                response += "V(2) = " + String.format(Locale.US, "%.3f", v2magdB) + " dB, " + String.format(Locale.US, "%.1f", v4phase)  + "°\n"
-//                response += "I(Vs) = " + String.format(Locale.US, "%.2f", iVs_mA) + " mA\n"
-//                response += "I(L1) = " + String.format(Locale.US, "%.2f", iL1_mA) + " mA\n"
-                response += "freq = " + String.format(Locale.US,"%.1f", freq) + " Hz\n"
+            if (sampleCount > 0 && idxV2 != null /*&& idxV4 != null && idxIVs != null && idxIL1 != null*/ && idxFreq != null) {
+                val freqHz = DoubleArray(sampleCount)
+                val yDb = DoubleArray(sampleCount)
+
+                for (s in 0 until sampleCount){
+                    val freq = realAt(s, idxFreq)
+                    val v2real = realAt(s, idxV2)
+                    val v2imag = imagAt(s, idxV2)
+                    val v2power = v2real * v2real + v2imag * v2imag
+                    val v2dB = if(v2power > 0.0) 10 * log10(v2power) else Double.NEGATIVE_INFINITY
+                    val v2phase = atan2(v2imag, v2real) * 180.0 / PI
+
+                    // update vectors to plot
+                    freqHz[s] = freq
+                    yDb[s] = v2dB
+                    response += String.format(Locale.US, "%.1f", freq) + " Hz, " + String.format(
+                        Locale.US,
+                        "%.3f",
+                        v2dB
+                    ) + " dB, " + String.format(Locale.US, "%.1f", v2phase) + "°\n"
+                }
+
+                PlotDataHolder.freqHz = freqHz
+                PlotDataHolder.y = yDb
+                PlotDataHolder.label = "V(2) magnitude (dB)"
+                showPlotFragment()
             } else {
                 response += "\n[WARN] No AC sample data available (names=${names.size}, stride=$stride, data=${data.size})\n"
             }
@@ -251,6 +306,19 @@ class MainActivity : AppCompatActivity() {
             override fun onStopTrackingTouch(seekBar: SeekBar?) { }
         })
 
+        binding.sbC1.setOnSeekBarChangeListener (object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                if (!fromUser) return
+                val c1val : Double = c1max * progress / 100.0
+                withSuppressedCallbacks {
+                    binding.teC1.setText(c1val.toString())
+                }
+                createNetlist()
+            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) { }
+            override fun onStopTrackingTouch(seekBar: SeekBar?) { }
+        })
+
         // TEXTEDIT LISTENERS
         binding.teV1.doAfterTextChanged {
             if (suppressUiCallbacks) return@doAfterTextChanged
@@ -267,10 +335,16 @@ class MainActivity : AppCompatActivity() {
             createNetlist()
         }
 
+        binding.teC1.doAfterTextChanged {
+            if (suppressUiCallbacks) return@doAfterTextChanged
+            createNetlist()
+        }
+
         // SPINNER LISTENERS
         binding.spinnerV1.onItemSelectedListener = suffixListener
         binding.spinnerR1.onItemSelectedListener = suffixListener
         binding.spinnerR2.onItemSelectedListener = suffixListener
+        binding.spinnerC1.onItemSelectedListener = suffixListener
     }
 
     private var suppressUiCallbacks = false
