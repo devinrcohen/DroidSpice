@@ -6,7 +6,7 @@ import androidx.fragment.app.Fragment
 import com.github.mikephil.charting.charts.LineChart
 import android.widget.TextView
 import android.widget.Button
-
+import com.devinrcohen.droidspice.AnalysisType // probably not necessary
 class PlotFragment : Fragment(R.layout.fragment_plot) {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
@@ -22,10 +22,18 @@ class PlotFragment : Fragment(R.layout.fragment_plot) {
             (activity as? MainActivity)?.dismissPlot()
         }
 
-        val f = PlotDataHolder.freqHz
-        val y = PlotDataHolder.y
-        if (f != null && y != null) {
-            plotFrequencyResponse(chart, f, y, PlotDataHolder.label)
+        if (PlotDataHolder.type == AnalysisType.FREQ) {
+            val f = PlotDataHolder.x
+            val y = PlotDataHolder.y
+            if (f != null && y != null) {
+                plotFrequencyResponse(chart, f, y, PlotDataHolder.label)
+            }
+        } else if (PlotDataHolder.type == AnalysisType.TRAN) {
+            val t = PlotDataHolder.x
+            val y = PlotDataHolder.y
+            if (t != null && y != null) {
+                plotTransientResponse(chart, t, y, PlotDataHolder.label)
+            }
         }
     }
 }

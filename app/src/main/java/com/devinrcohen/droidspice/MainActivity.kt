@@ -10,9 +10,9 @@ import androidx.fragment.app.FragmentManager
 import com.devinrcohen.droidspice.databinding.ActivityMainBinding
 import java.util.Locale
 import kotlin.math.*
+import com.devinrcohen.droidspice.AnalysisType
 
 class MainActivity : AppCompatActivity() {
-
     private lateinit var binding: ActivityMainBinding
     private lateinit var plotBackCallback: androidx.activity.OnBackPressedCallback
 
@@ -73,7 +73,7 @@ class MainActivity : AppCompatActivity() {
         var v1txt : String = "10"
         var r1txt : String = "1.0"
         var r2txt : String = "10.0"
-        var c1txt: String = "500.0"
+        var c1txt: String = "10.0"
 
         // max values for initialize progress calculation
         // leave as constants for now, may add UI elements
@@ -95,7 +95,7 @@ class MainActivity : AppCompatActivity() {
         var spinnerV1selection : Int = 1
         var spinnerR1selection : Int = 2 // kΩ
         var spinnerR2selection : Int = 4 // GΩ (approx open circuit)
-        var spinnerC1selection : Int = 0 // pF
+        var spinnerC1selection : Int = 1 // nF
 
         // one-time: init library
         binding.tvOutput.text = initNgspice()
@@ -162,9 +162,8 @@ class MainActivity : AppCompatActivity() {
 
         // do simulation
         //binding.tvOutput.text = initNgspice()
-        binding.btnRunAC.setOnClickListener {
-            var response = runAnalysis(current_netlist, "ac dec 20 0.1 100meg")
-
+        binding.btnRunTran.setOnClickListener {
+            var response = runAnalysis(current_netlist, "tran 0.1u 100u")
             val names = getVecNames()
             val stride = getComplexStride() // 1 for real-only, 2 for real+imag
             val data = takeSamples()
@@ -184,9 +183,60 @@ class MainActivity : AppCompatActivity() {
                 data[sample * rowLen + vecIndex * stride + 1]
             // OP should yield exactly one sample (sampleCount == 1)
             val idxV2 = indexByName[norm("v(2)")]
-//            val idxV4 = indexByName[norm("v(4)")]
-//            val idxIVs = indexByName[norm("vs#branch")]
-//            val idxIL1 = indexByName[norm("l1#branch")]
+            val idxTime = indexByName[norm("time")]
+
+            if (sampleCount > 0 && idxV2 != null /*&& idxV4 != null && idxIVs != null && idxIL1 != null*/ && idxTime != null) {
+                val timeSec = DoubleArray(sampleCount)
+                val y = DoubleArray(sampleCount)
+
+                for (s in 0 until sampleCount){
+                    val time = realAt(s, idxTime)
+                    val v2 = realAt(s, idxV2)
+
+                    // update vectors to plot
+                    timeSec[s] = time
+                    y[s] = v2
+                    response += String.format(Locale.US, "%.6f", time) + " s, " + String.format(
+                        Locale.US,
+                        "%.3f",
+                        v2
+                    ) + " V\n"
+                }
+
+                PlotDataHolder.x = timeSec
+                PlotDataHolder.y = y
+                PlotDataHolder.label = "V(2) (V)"
+                PlotDataHolder.type = AnalysisType.TRAN
+                showPlotFragment()
+            } else {
+                response += "\n[WARN] No transient sample data available (names=${names.size}, stride=$stride, data=${data.size})\n"
+            }
+
+            binding.tvOutput.text = response
+        }
+
+        binding.btnRunAC.setOnClickListener {
+            var response = runAnalysis(current_netlist, "ac dec 20 0.1 100meg")
+            //var response = runAnalysis(current_netlist, "tran 0.1u 1m")
+            val names = getVecNames()
+            val stride = getComplexStride() // 1 for real-only, 2 for real+imag
+            val data = takeSamples()
+
+            val indexByName = HashMap<String, Int>(names.size)
+            for (i in names.indices) {
+                indexByName[norm(names[i])] = i
+            }
+
+            val vecCount = names.size
+            val rowLen = vecCount * stride
+            val sampleCount = if (rowLen > 0) data.size / rowLen else 0
+            //val mySample = 105
+            fun realAt(sample: Int, vecIndex: Int): Double =
+                data[sample * rowLen + vecIndex * stride]
+            fun imagAt(sample: Int, vecIndex: Int): Double =
+                data[sample * rowLen + vecIndex * stride + 1]
+            // OP should yield exactly one sample (sampleCount == 1)
+            val idxV2 = indexByName[norm("v(2)")]
             val idxFreq = indexByName[norm("frequency")]
 
             if (sampleCount > 0 && idxV2 != null /*&& idxV4 != null && idxIVs != null && idxIL1 != null*/ && idxFreq != null) {
@@ -211,9 +261,10 @@ class MainActivity : AppCompatActivity() {
                     ) + " dB, " + String.format(Locale.US, "%.1f", v2phase) + "°\n"
                 }
 
-                PlotDataHolder.freqHz = freqHz
+                PlotDataHolder.x = freqHz
                 PlotDataHolder.y = yDb
                 PlotDataHolder.label = "V(2) magnitude (dB)"
+                PlotDataHolder.type = AnalysisType.FREQ
                 showPlotFragment()
             } else {
                 response += "\n[WARN] No AC sample data available (names=${names.size}, stride=$stride, data=${data.size})\n"
